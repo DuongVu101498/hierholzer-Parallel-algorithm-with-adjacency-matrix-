@@ -1,0 +1,522 @@
+// xemina_C++.cpp : Defines the entry point for the console application.
+//
+
+#include "stdafx.h"
+#include <omp.h>
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <list>
+#include <stdlib.h>  
+#include <time.h> 
+#include <chrono> 
+
+using namespace std;
+bool InPut_FromFile = false;
+// true: chạy cho ma trận kề từ File_name, false: chạy cho K_Default_Size (đồ thị đầy đủ)
+string Input_File_name = "matran_ke.txt";
+bool OutPut_toFile = false;// Để so sánh thời gian cần set OutPut_toFile = false.
+string Output_File_name = "Parallel_result.txt", Output_File_name_normal= "normal_result.txt";
+int Default_Size =251;
+bool RunParallel = true;
+bool RunNormal = true;
+int main()
+{ 
+	// Nhập ma trận kề từ file
+	int sizeA = 0;
+	if (InPut_FromFile)
+	{
+		string line;
+		ifstream myfile(Input_File_name);
+		if (myfile.is_open())
+		{
+			getline(myfile, line);
+			for (int i = 0; i < line.length(); i++)
+			{
+				if ((int(line[i]) - 48) == 0 || (int(line[i]) - 48) == 1)
+				{
+					sizeA++;
+				}
+
+			}
+			myfile.close();
+		}
+		else
+		{
+			cout << "Unable to open file";
+		}
+	}
+	else
+	{
+		sizeA = Default_Size;
+	}
+	short int *A;
+	A = new short int[sizeA*sizeA]; //ma trận kề cho Parallel 
+	short int *C;
+	C = new short int[sizeA*sizeA]; //ma trận kề cho normal
+	if (InPut_FromFile)
+	{
+		string line1;
+		int count = 0, dem = 0;
+		ifstream myfile1("matran_ke.txt");
+		if (myfile1.is_open())
+		{
+			while (getline(myfile1, line1))
+			{
+				for (int i = 0; i < line1.length(); i++)
+				{
+					if ((int(line1[i]) - 48) == 0)
+					{
+						A[count*sizeA + dem] = 0;
+						C[count*sizeA + dem] = 0;
+						dem++;
+					}
+					if ((int(line1[i]) - 48) == 1)
+					{
+						A[count*sizeA + dem] = 1;
+						C[count*sizeA + dem] = 1;
+						dem++;
+					}
+				}
+				count++;
+				dem = 0;
+			}
+			myfile1.close();
+		}
+		else
+		{
+			cout << "Unable to open file";
+		}
+	}
+	else
+	{
+		for (int i = 0; i < sizeA; i++)
+		{
+			for (int j = 0; j < sizeA; j++)
+			{
+				if (i != j)
+				{
+					A[i*sizeA + j] = 1;
+					C[i*sizeA + j] = 1;
+				}
+				else
+				{
+					A[i*sizeA + j] = 0;
+					C[i*sizeA + j] = 0;
+				}
+			}
+		}
+	}
+	
+	/// print A
+	if (false)
+	{
+		for (int i = 0; i < sizeA; i++)
+		{
+			for (int j = 0; j < sizeA; j++)
+				printf("%d ", A[i*sizeA + j]);
+			printf("\n");
+		}
+	}
+	///kiem tra do thi euler
+	int sum = 0;
+	bool IsEuler = true;
+	for (int i = 0; i < sizeA; i++)
+	{
+		for (int j = 0; j < sizeA; j++)
+			sum += A[i*sizeA + j];
+		if (sum % 2 != 0)
+		{
+			IsEuler = false;
+			break;
+		}
+		sum = 0;
+	}
+
+	///
+	if (IsEuler)
+	{
+		if(RunParallel)
+		{
+			int count2 = 0;
+			bool STOP = false;
+			list<int> cycle;// đường đi của mỗi luồng
+			short int *B;
+			B = new short int[sizeA*sizeA];
+			srand(time(NULL));
+			int firstvertex = rand() % sizeA;
+			omp_set_num_threads(2);
+			omp_lock_t lock_tim_canh_tiep_theo;
+			omp_init_lock(&lock_tim_canh_tiep_theo);
+			// chạy song song
+			int count_coincidence = 1;
+			int count_pos = 0;
+			// bắt đầu đếm thời gian
+			auto start = std::chrono::high_resolution_clock::now();
+#pragma omp parallel
+			{
+				int id = omp_get_thread_num(), tmp = 0;
+				bool Path_Stuck;
+				list<int> path;
+				list<int> EulerCycle;
+				list<int>::iterator pos;
+				list<int>::iterator tpos;
+				list<int>::iterator it;
+				pos = EulerCycle.begin();
+				tpos = pos;
+				while (!STOP)
+				{
+					if (id == 0)
+					{
+						if (OutPut_toFile) // in ra file
+						{
+							if (count_coincidence == 1)
+							{
+								ofstream myfile;
+								myfile.open(Output_File_name);
+								myfile << "Coincidence " << count_coincidence << ":";
+								myfile.close();
+							}
+							else
+							{
+								ofstream myfile;
+								myfile.open(Output_File_name, ofstream::app);
+								myfile << "\n\nCoincidence " << count_coincidence << ":";
+								myfile.close();
+							}
+						}
+					}
+#pragma omp barrier
+					Path_Stuck = false;
+					path.push_back(firstvertex);
+					while (!Path_Stuck)
+					{
+						for (int i = 0; i < sizeA; i++) // tìm cạnh tiếp theo của path
+						{
+
+							if (A[path.back()*sizeA + i] == 1)
+							{
+								omp_set_lock(&lock_tim_canh_tiep_theo);
+								if (A[path.back()*sizeA + i] == 1)
+								{
+									A[path.back()*sizeA + i] = 0;
+									A[i*sizeA + path.back()] = 0;
+									path.push_back(i);
+									omp_unset_lock(&lock_tim_canh_tiep_theo);
+									break;
+								}
+								omp_unset_lock(&lock_tim_canh_tiep_theo);
+							}
+							if (i == sizeA - 1)
+							{
+								Path_Stuck = true;// đánh dấu đường đi bị kẹt
+							}
+						}
+					}
+					if (id == 1)
+					{
+						if (OutPut_toFile)  // in ra file path của thread 2
+						{
+							tmp = -1;
+							ofstream myfile;
+							myfile.open(Output_File_name, ofstream::app);
+							myfile << "\npath of thread 2:\n";
+							for (it = path.begin(); it != path.end(); ++it)
+							{
+								if (tmp == -1)
+								{
+									myfile << *it;
+									tmp++;
+								}
+								else
+								{
+									myfile << " -> ";
+									myfile << *it;
+								}
+							}
+							myfile.close();
+						}
+						// đưa path thread 2 vào mảng chung
+						tpos = path.begin();
+						tmp = path.size() - 1;
+						count2 = tmp;
+						for (int i = 0; i < tmp; i++)
+						{
+							B[i] = *tpos;
+							advance(tpos, 1);
+						}
+						path.clear();
+					}
+
+#pragma omp barrier
+
+
+#pragma omp master
+					{
+						count_coincidence++; // cập nhập số lần xung đột của 2 luồng
+						if (OutPut_toFile)  // in ra file
+						{
+							int tmp_out = -1;
+							ofstream myfile;
+							myfile.open(Output_File_name, ofstream::app);
+							myfile << "\npath of thread 1:\n";
+							for (it = path.begin(); it != path.end(); ++it)
+							{
+								if (tmp_out == -1)
+								{
+									myfile << *it;
+									tmp_out++;
+								}
+								else
+								{
+									myfile << " -> ";
+									myfile << *it;
+								}
+							}
+							myfile.close();
+						}
+						// kết hợp 2 path thành cycle
+						for (int i = count2 - 1; i > -1; i--)
+						{
+							path.push_back(B[i]);
+						}
+						if (OutPut_toFile)  // in ra file
+						{
+							int tmp_out = -1;
+							ofstream myfile;
+							myfile.open(Output_File_name, ofstream::app);
+							myfile << "\ncombine to cycle:\n";
+							for (it = path.begin(); it != path.end(); ++it)
+							{
+								if (tmp_out == -1)
+								{
+									myfile << *it;
+									tmp_out++;
+								}
+								else
+								{
+									myfile << " -> ";
+									myfile << *it;
+								}
+							}
+							myfile.close();
+						}
+						// bổ sung cycle vào  chu trình euler
+						tpos = pos;
+						if (EulerCycle.empty())
+						{
+							EulerCycle.splice(EulerCycle.begin(), path);
+							pos = EulerCycle.begin();
+							advance(pos, 1);
+							count_pos++;
+						}
+						else
+						{
+							advance(tpos, 1);
+							EulerCycle.splice(tpos, path);
+							tpos = pos;
+							advance(tpos, 1);
+							EulerCycle.erase(tpos);
+							advance(pos, 1);
+							count_pos++;
+						}
+						// xác định vị trí chu trình tiếp theo
+						while (pos != EulerCycle.end())
+						{
+
+							while (tmp < sizeA)
+							{
+								if (A[*pos*sizeA + tmp] == 1)
+									break;
+								tmp++;
+							}
+							if (tmp == sizeA)
+							{
+								advance(pos, 1);
+								count_pos++;
+								tmp = 0;
+							}
+							else
+							{
+								firstvertex = *pos;
+								tmp = 0;
+								break;
+							}
+						}
+						if (pos == EulerCycle.end())
+						{
+							STOP = true;
+						}
+						if (OutPut_toFile) // in ra chu trinh euler hiện tại
+						{
+							int tmp_out = 0;
+							ofstream myfile;
+							myfile.open(Output_File_name, ofstream::app);
+							myfile << "\nAdd to current euler cycle:\n";
+							for (it = EulerCycle.begin(); it != EulerCycle.end(); ++it)
+							{
+								if (tmp_out == 0)
+								{
+									myfile << *it;
+									tmp_out++;
+								}
+								else
+								{
+									myfile << " -> ";
+									if (tmp_out == count_pos)
+									{
+										myfile << "[" << *it << "]";
+										tmp_out++;
+									}
+									else
+									{
+										myfile << *it;
+										if (tmp_out < count_pos)
+										{
+											tmp_out++;
+										}
+									}
+								}
+							}
+							myfile.close();
+						}
+					}
+#pragma omp barrier
+				}
+#pragma omp master
+				{
+					auto finish = std::chrono::high_resolution_clock::now();
+					std::chrono::duration<double> elapsed = finish - start;
+					std::cout << "\nParallel elapsed time: " << elapsed.count() << " s\n";
+					if (OutPut_toFile) // in ra chu trình euler
+					{
+						tmp = -1;
+						ofstream myfile;
+						myfile.open(Output_File_name, ofstream::app);
+						myfile << "\n\nFinal result, Euler cycle:\n";
+						for (it = EulerCycle.begin(); it != EulerCycle.end(); ++it)
+						{
+							if (tmp == -1)
+							{
+								myfile << *it;
+								tmp++;
+							}
+							else
+							{
+								myfile << " -> ";
+								myfile << *it;
+							}
+						}
+						myfile << "\n length : " << --count_pos;
+						myfile.close();
+
+					}
+				}
+			}
+		}
+	
+		// chạy bình thường
+		if (RunNormal)
+		{
+			bool STOP2 = false;
+			srand(time(NULL));
+			int firstvertex = rand() % sizeA;
+			bool Path_Stuck;
+			list<int> path;
+			list<int> EulerCycle;
+			list<int>::iterator pos;
+			list<int>::iterator tpos;
+			list<int>::iterator it;
+			int tmp = 0;
+			int count_pos = 0;
+			auto start2 = std::chrono::high_resolution_clock::now();
+			while (!STOP2)
+			{
+				Path_Stuck = false;
+				path.push_back(firstvertex);
+				while (!Path_Stuck)
+				{
+					for (int i = 0; i < sizeA; i++) // tìm cạnh tiếp theo của path
+					{
+
+						if (C[path.back()*sizeA + i] == 1)
+						{
+							C[path.back()*sizeA + i] = 0;
+							C[i*sizeA + path.back()] = 0;
+							path.push_back(i);
+							break;
+						}
+						if (i == sizeA - 1)
+						{
+							Path_Stuck = true;// đánh dấu đường đi bị kẹt
+						}
+					}
+				}
+				tpos = pos;
+				if (EulerCycle.empty())
+				{
+					EulerCycle.splice(EulerCycle.begin(), path);
+					pos = EulerCycle.begin();
+					advance(pos, 1);
+					count_pos++;
+				}
+				else
+				{
+					advance(tpos, 1);
+					EulerCycle.splice(tpos, path);
+					tpos = pos;
+					advance(tpos, 1);
+					EulerCycle.erase(tpos);
+					advance(pos, 1);
+					count_pos++;
+				}
+				while (pos != EulerCycle.end())
+				{
+
+					while (tmp < sizeA)
+					{
+						if (C[*pos*sizeA + tmp] == 1)
+							break;
+						tmp++;
+					}
+					if (tmp == sizeA)
+					{
+						advance(pos, 1);
+						count_pos++;
+						tmp = 0;
+					}
+					else
+					{
+						firstvertex = *pos;
+						tmp = 0;
+						break;
+					}
+				}
+				if (pos == EulerCycle.end())
+				{
+					STOP2 = true;
+				}
+			}
+			auto finish2 = std::chrono::high_resolution_clock::now();
+			std::chrono::duration<double> elapsed2 = finish2 - start2;
+			std::cout << "\nNormal lapsed time: " << elapsed2.count() << " s\n";
+			std::cout << "length: " << --count_pos;
+		}
+
+	}
+	else
+	{
+		printf("Do thi khong co chu trinh Euler.");
+		if (OutPut_toFile) // in ra chu trình euler
+		{
+			ofstream myfile;
+			myfile.open(Output_File_name);
+			myfile << "Do thi khong co chu trinh Euler.";
+			myfile.close();
+		}
+	}
+
+	printf("\n Ket thuc chuong trinh! ");
+	return 0;
+}
+
